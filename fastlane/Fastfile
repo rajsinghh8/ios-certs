@@ -252,7 +252,25 @@ platform :ios do
         UI.message("match (readonly) reused an existing cert/profile for #{bundle_id} — nothing new provisioned.")
       rescue => match_err
         UI.important("match (readonly) found nothing usable for #{bundle_id} (#{match_err.class}: #{match_err.message}) — falling back to provisioning.")
-        match(readonly: false, **match_args)
+        begin
+          match(readonly: false, **match_args)
+        rescue => provision_err
+          # The persisted bundle can reference a cert that's genuinely gone
+          # from the Developer Portal (revoked/deleted directly on Apple's
+          # site, outside this pipeline — team/API key unchanged). match then
+          # hard-fails instead of minting a replacement, since it still finds
+          # a (now-invalid) cert file locally and never gets as far as
+          # "nothing here, create one". Detected only from this exact
+          # message; wipe the stale certs/profiles in SIGNING_BUNDLE_DIR and
+          # retry once so match provisions a genuinely fresh cert.
+          raise unless provision_err.message.to_s.include?("is not available on the Developer Portal")
+
+          UI.important("Stored certificate is stale on the Developer Portal (#{provision_err.message}) — clearing the persisted signing bundle and retrying with a fresh cert.")
+          bundle_dir = ENV["SIGNING_BUNDLE_DIR"]
+          FileUtils.rm_rf(Dir.glob(File.join(bundle_dir, "certs")))
+          FileUtils.rm_rf(Dir.glob(File.join(bundle_dir, "profiles")))
+          match(readonly: false, **match_args)
+        end
       end
 
       build_output_dir = File.join(project_root, "build")
