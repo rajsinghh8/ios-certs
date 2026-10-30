@@ -417,7 +417,15 @@ jobs:
 
           if lookup_resp.code.start_with?('2')
             found = JSON.parse(lookup_resp.body)['data'] || []
-            match = found.find { |app| app.dig('attributes', 'bundleId') && app.dig('attributes', 'bundleId') != bundle_id }
+            # The name filter is not an exact match ("App" also lists "Ios Appp test55"), and another FrontendX job's app is never
+            # ours to adopt: only an app with exactly this name that is not a com.frontendx.job-* one counts (see AppStoreNameMatch).
+            require File.join(ENV.fetch('GITHUB_WORKSPACE'), 'fastlane', 'appstore_name_match')
+            match = found.find do |app|
+              AppStoreNameMatch.reusable?(
+                found_name: app.dig('attributes', 'name'), found_bundle_id: app.dig('attributes', 'bundleId'),
+                wanted_name: app_name, own_bundle_id: bundle_id
+              )
+            end
             if match
               resolved_bundle_id = match['attributes']['bundleId']
               puts "::warning::App named '#{app_name}' already exists in App Store Connect under bundle ID " \
