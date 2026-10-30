@@ -1,5 +1,6 @@
 require 'match/encryption'
 require_relative 'local_match_storage'
+require_relative 'appstore_name_match'
 
 # Registers the "local_backend" match storage_mode (see local_match_storage.rb)
 # — `match` reads/writes the job owner's certs/profiles directly from a local
@@ -65,7 +66,20 @@ platform :ios do
     # and calling produce.
     if existing_app.nil?
       existing_app = begin
-        Spaceship::ConnectAPI::App.all(filter: { name: app_name }).first
+        # The API's name filter is not an exact match ("App" also lists "Ios Appp test55"), and an app that carries another FrontendX
+        # job's bundle ID is never ours to reuse: see AppStoreNameMatch. Anything else falls through to produce, which fails with
+        # APP_NAME_TAKEN when the name really is taken (the member then renames the project).
+        by_name = Array(Spaceship::ConnectAPI::App.all(filter: { name: app_name }))
+        reusable = by_name.find do |candidate|
+          AppStoreNameMatch.reusable?(
+            found_name: candidate.name, found_bundle_id: candidate.bundle_id, wanted_name: app_name, own_bundle_id: bundle_id
+          )
+        end
+        if reusable.nil? && !by_name.empty?
+          listed = by_name.map { |a| "'#{a.name}' (#{a.bundle_id})" }.join(", ")
+          UI.message("App Store Connect lists #{listed} for the name '#{app_name}', but none of them is this app - not reusing any of them.")
+        end
+        reusable
       rescue => spaceship_err
         UI.important("ASC API name lookup raised #{spaceship_err.class}: #{spaceship_err.message} — falling through to produce.")
         nil
