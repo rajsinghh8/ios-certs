@@ -1,6 +1,7 @@
 require 'match/encryption'
 require_relative 'local_match_storage'
 require_relative 'appstore_name_match'
+require_relative 'stale_signing'
 
 # Registers the "local_backend" match storage_mode (see local_match_storage.rb)
 # — `match` reads/writes the job owner's certs/profiles directly from a local
@@ -275,9 +276,13 @@ platform :ios do
           # hard-fails instead of minting a replacement, since it still finds
           # a (now-invalid) cert file locally and never gets as far as
           # "nothing here, create one". Detected only from this exact
-          # message; wipe the stale certs/profiles in SIGNING_BUNDLE_DIR and
-          # retry once so match provisions a genuinely fresh cert.
-          raise unless provision_err.message.to_s.include?("is not available on the Developer Portal")
+          # failure (see stale_signing.rb: the "not available on the Developer
+          # Portal" sentence is only logged, the exception says "To reset the
+          # certificates..."; checking for the sentence never matched, so this
+          # recovery never ran); wipe the stale certs/profiles in
+          # SIGNING_BUNDLE_DIR and retry once so match provisions a genuinely
+          # fresh cert.
+          raise unless StaleSigning.stale_cert_error?(provision_err.message)
 
           UI.important("Stored certificate is stale on the Developer Portal (#{provision_err.message}) — clearing the persisted signing bundle and retrying with a fresh cert.")
           bundle_dir = ENV["SIGNING_BUNDLE_DIR"]
